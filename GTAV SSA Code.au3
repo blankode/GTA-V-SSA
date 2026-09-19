@@ -4,8 +4,8 @@
  Author:         blankode
 
  Script Function:
-    Pauses and resumes GTAV process in order to obtain solo-session
-    or fix game stuttering (server issues)
+    Pauses and resumes GTAV process in order to obtain solo-session,
+    fix game stuttering (server issues), AFK mode and process kill.
 
 #ce ----------------------------------------------------------------------------
 
@@ -29,22 +29,27 @@ Global $AFK = False
 ; GUI
 ; -----------------------------------------------------------------------------
 
-Local $x = @DesktopWidth - 218
+Global Const $GUI_WIDTH = 270
+Local $x = @DesktopWidth - $GUI_WIDTH
 
 HotKeySet("{F9}", "ToggleAFK")
 HotKeySet("{F10}", "goSolo")
 HotKeySet("{F11}", "terminate")
+HotKeySet("{F12}", "KillGTA")
 
-Local $hGUI = GUICreate("GTAV SSA", 218, 20, $x, 0, $WS_POPUP, $WS_EX_TOPMOST)
+Local $hGUI = GUICreate("GTAV SSA", $GUI_WIDTH, 20, $x, 0, $WS_POPUP, $WS_EX_TOPMOST)
 
 GUISetBkColor(0x000000)
 GUISetFont(11, 400, -1, "Tahoma")
 
-Local $closeKey = GUICtrlCreateLabel("| F11", 180, 0, 38, 20)
-GUICtrlSetColor($closeKey, 0xFF0000)
-
-Global $context = GUICtrlCreateLabel("F9 = AFK | F10 = GO SOLO", 5, 0, 175, 20)
+Global $context = GUICtrlCreateLabel( _
+    "F9 = AFK | F10 = SOLO | F12 = KILL", _
+    5, 0, 275, 20 _
+)
 GUICtrlSetColor($context, 0xFFFFFF)
+
+Local $closeKey = GUICtrlCreateLabel("| F11", 235, 0, 45, 20)
+GUICtrlSetColor($closeKey, 0xFF0000)
 
 GUISetState(@SW_SHOW)
 
@@ -55,6 +60,17 @@ GUISetState(@SW_SHOW)
 While 1
     Sleep(100)
 WEnd
+
+; -----------------------------------------------------------------------------
+; RESET GUI TEXT
+; -----------------------------------------------------------------------------
+
+Func ResetStatus()
+
+    GUICtrlSetData($context, "F9 = AFK | F10 = SOLO | F12 = KILL")
+    GUICtrlSetColor($context, 0xFFFFFF)
+
+EndFunc
 
 ; -----------------------------------------------------------------------------
 ; AFK MODE
@@ -91,8 +107,7 @@ Func ToggleAFK()
 
     EndIf
 
-    GUICtrlSetData($context, "F9 = AFK | F10 = GO SOLO")
-    GUICtrlSetColor($context, 0xFFFFFF)
+    ResetStatus()
 
 EndFunc
 
@@ -106,6 +121,7 @@ Func goSolo()
     Local $PID = ProcessExists($GTA_PROCESS)
 
     If $PID = 0 Then
+
         GUICtrlSetData($context, "GTA NOT FOUND")
         GUICtrlSetColor($context, 0xFF0000)
 
@@ -116,10 +132,9 @@ Func goSolo()
             "Make sure GTA V Enhanced is running." _
         )
 
-        GUICtrlSetData($context, "F9 = AFK | F10 = GO SOLO")
-        GUICtrlSetColor($context, 0xFFFFFF)
-
+        ResetStatus()
         Return
+
     EndIf
 
     ; PsSuspend should be in the same folder as this script
@@ -135,7 +150,9 @@ Func goSolo()
             @ScriptDir _
         )
 
+        ResetStatus()
         Return
+
     EndIf
 
     ; -------------------------------------------------------------------------
@@ -160,10 +177,9 @@ Func goSolo()
             "Try running this script as Administrator." _
         )
 
-        GUICtrlSetData($context, "F9 = AFK | F10 = GO SOLO")
-        GUICtrlSetColor($context, 0xFFFFFF)
-
+        ResetStatus()
         Return
+
     EndIf
 
     ; -------------------------------------------------------------------------
@@ -203,15 +219,96 @@ Func goSolo()
 
     EndIf
 
-    GUICtrlSetData($context, "F9 = AFK | F10 = GO SOLO")
-    GUICtrlSetColor($context, 0xFFFFFF)
+    ResetStatus()
 
 EndFunc
 
 ; -----------------------------------------------------------------------------
-; EXIT
+; KILL GTA PROCESS
+; -----------------------------------------------------------------------------
+
+Func KillGTA()
+
+    Local $PID = ProcessExists($GTA_PROCESS)
+
+    If $PID = 0 Then
+
+        GUICtrlSetData($context, "GTA NOT FOUND")
+        GUICtrlSetColor($context, 0xFF0000)
+
+        Sleep(1200)
+
+        ResetStatus()
+        Return
+
+    EndIf
+
+    ; Confirmation to prevent accidental F12 presses
+    Local $Answer = MsgBox( _
+        BitOR($MB_YESNO, $MB_ICONWARNING), _
+        "GTAV SSA", _
+        "Force close GTA V?" & @CRLF & @CRLF & _
+        "PID: " & $PID _
+    )
+
+    If $Answer <> $IDYES Then
+        ResetStatus()
+        Return
+    EndIf
+
+    ; Disable AFK mode if active
+    $AFK = False
+
+    GUICtrlSetData($context, "KILLING GTA...")
+    GUICtrlSetColor($context, 0xFF0000)
+
+    ProcessClose($PID)
+
+    ; Wait up to 5 seconds for process to disappear
+    Local $Timer = TimerInit()
+
+    While ProcessExists($PID)
+
+        Sleep(100)
+
+        If TimerDiff($Timer) > 5000 Then
+            ExitLoop
+        EndIf
+
+    WEnd
+
+    If ProcessExists($PID) Then
+
+        GUICtrlSetData($context, "FAILED TO KILL GTA")
+        GUICtrlSetColor($context, 0xFF0000)
+
+        MsgBox( _
+            $MB_ICONERROR, _
+            "GTAV SSA", _
+            "Failed to terminate GTA V." & @CRLF & @CRLF & _
+            "Try running GTAV SSA as Administrator." _
+        )
+
+    Else
+
+        GUICtrlSetData($context, "GTA TERMINATED")
+        GUICtrlSetColor($context, 0x8CDD57)
+
+        Sleep(1500)
+
+    EndIf
+
+    ResetStatus()
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; EXIT GTAV SSA
 ; -----------------------------------------------------------------------------
 
 Func terminate()
+
+    $AFK = False
     Exit 0
+
 EndFunc
