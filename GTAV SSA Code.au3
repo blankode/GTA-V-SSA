@@ -9,6 +9,7 @@
     - F10 = Create solo session by suspending GTA
     - F11 = Exit GTAV SSA
     - F12 = Forcefully terminate GTA immediately
+    - X   = Exit GTAV SSA
 
 #ce ----------------------------------------------------------------------------
 
@@ -21,6 +22,7 @@
 #include <WindowsConstants.au3>
 #include <WinAPIFiles.au3>
 #include <Misc.au3>
+#include <StaticConstants.au3>
 
 ; -----------------------------------------------------------------------------
 ; SETTINGS
@@ -47,11 +49,15 @@ Global $KillingGTA = False
 ; Used for physical F12 detection
 Global $F12WasPressed = False
 
+; Used to periodically reinforce always-on-top
+Global $TopMostTimer = TimerInit()
+
 ; -----------------------------------------------------------------------------
 ; GUI
 ; -----------------------------------------------------------------------------
 
-Global Const $GUI_WIDTH = 290
+Global Const $GUI_WIDTH = 285
+Global Const $GUI_HEIGHT = 20
 
 Local $x = @DesktopWidth - $GUI_WIDTH
 
@@ -62,18 +68,28 @@ HotKeySet("{F11}", "terminate")
 ; F12 is intentionally NOT registered using HotKeySet.
 ; It is detected directly using _IsPressed().
 
-Local $hGUI = GUICreate( _
+; WS_EX_TOOLWINDOW:
+; Prevents the utility from appearing as a normal taskbar application.
+;
+; WS_EX_TOPMOST:
+; Keeps the utility above normal windows.
+
+Global $hGUI = GUICreate( _
     "GTAV SSA", _
     $GUI_WIDTH, _
-    20, _
+    $GUI_HEIGHT, _
     $x, _
     0, _
     $WS_POPUP, _
-    $WS_EX_TOPMOST _
+    BitOR($WS_EX_TOPMOST, $WS_EX_TOOLWINDOW) _
 )
 
 GUISetBkColor(0x000000)
 GUISetFont(11, 400, -1, "Tahoma")
+
+; -----------------------------------------------------------------------------
+; STATUS TEXT
+; -----------------------------------------------------------------------------
 
 Global $context = GUICtrlCreateLabel( _
     "F9 = AFK | F10 = SOLO | F12 = KILL", _
@@ -85,17 +101,41 @@ Global $context = GUICtrlCreateLabel( _
 
 GUICtrlSetColor($context, 0xFFFFFF)
 
-Local $closeKey = GUICtrlCreateLabel( _
+; -----------------------------------------------------------------------------
+; F11 DISPLAY
+; -----------------------------------------------------------------------------
+
+Global $closeKey = GUICtrlCreateLabel( _
     "| F11", _
-    245, _
+    232, _
     0, _
-    45, _
+    43, _
     20 _
 )
 
 GUICtrlSetColor($closeKey, 0xFF0000)
 
-GUISetState(@SW_SHOW)
+; -----------------------------------------------------------------------------
+; CLICKABLE X BUTTON
+; -----------------------------------------------------------------------------
+
+Global $closeButton = GUICtrlCreateLabel( _
+    "X", _
+    265, _
+    0, _
+    20, _
+    20, _
+    $SS_CENTER _
+)
+
+GUICtrlSetColor($closeButton, 0xFF0000)
+GUICtrlSetBkColor($closeButton, 0x000000)
+
+; Show GUI without activating it unnecessarily
+GUISetState(@SW_SHOW, $hGUI)
+
+; Explicitly force always-on-top
+WinSetOnTop($hGUI, "", 1)
 
 ; -----------------------------------------------------------------------------
 ; MAIN LOOP
@@ -103,9 +143,44 @@ GUISetState(@SW_SHOW)
 
 While 1
 
+    ; -------------------------------------------------------------------------
+    ; GUI EVENTS
+    ; -------------------------------------------------------------------------
+
+    Local $msg = GUIGetMsg()
+
+    Switch $msg
+
+        Case $GUI_EVENT_CLOSE
+            terminate()
+
+        Case $closeButton
+            terminate()
+
+    EndSwitch
+
+    ; -------------------------------------------------------------------------
+    ; GTA / HOTKEY PROCESSING
+    ; -------------------------------------------------------------------------
+
     CheckF12()
     ProcessAFK()
     ProcessSolo()
+
+    ; -------------------------------------------------------------------------
+    ; REINFORCE ALWAYS-ON-TOP
+    ;
+    ; WS_EX_TOPMOST normally handles this already.
+    ; This periodically reinforces it in case another application changes
+    ; the window's Z-order.
+    ; -------------------------------------------------------------------------
+
+    If TimerDiff($TopMostTimer) >= 2000 Then
+
+        WinSetOnTop($hGUI, "", 1)
+        $TopMostTimer = TimerInit()
+
+    EndIf
 
     Sleep(25)
 
