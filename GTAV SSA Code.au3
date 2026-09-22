@@ -8,7 +8,7 @@
     - F9  = Toggle AFK mode
     - F10 = Create solo session by suspending GTA
     - F11 = Exit GTAV SSA
-    - F12 = Forcefully terminate GTA immediately
+    - F12 = Forcefully terminate GTA, then clear GTA V Enhanced Profiles
     - X   = Exit GTAV SSA
 
 #ce ----------------------------------------------------------------------------
@@ -30,6 +30,20 @@
 
 Global Const $GTA_PROCESS = "GTA5_Enhanced.exe"
 Global Const $SUSPEND_TIME = 8
+
+; Per-user configuration.
+; The detected/custom Profiles path is persisted here.
+Global Const $CONFIG_DIR = @LocalAppDataDir & "\GTAV SSA"
+Global Const $CONFIG_FILE = $CONFIG_DIR & "\config.ini"
+Global Const $CONFIG_SECTION = "Paths"
+Global Const $CONFIG_KEY_PROFILES = "ProfilesPath"
+
+DirCreate($CONFIG_DIR)
+
+; Resolve the GTA V Enhanced Profiles folder at startup.
+; First tries the saved config, then the current user's Documents folder.
+; If neither is valid, the user is asked to select it once.
+Global $ProfilesPath = ResolveProfilesPath()
 
 ; -----------------------------------------------------------------------------
 ; GLOBAL STATE
@@ -566,11 +580,13 @@ Func KillGTA()
     WEnd
 
     ; -------------------------------------------------------------------------
-    ; Result
+    ; Result + Profiles cleanup
     ; -------------------------------------------------------------------------
 
     If ProcessExists($GTA_PROCESS) Then
 
+        ; Do NOT touch the Profiles folder if GTA could not be terminated.
+        ; This avoids deleting files while the game may still be using them.
         GUICtrlSetData($context, "FAILED TO KILL GTA")
         GUICtrlSetColor($context, 0xFF0000)
 
@@ -578,16 +594,277 @@ Func KillGTA()
 
     Else
 
-        GUICtrlSetData($context, "GTA TERMINATED")
-        GUICtrlSetColor($context, 0x8CDD57)
+        GUICtrlSetData($context, "CLEARING PROFILES...")
+        GUICtrlSetColor($context, 0xFFFF00)
 
-        Sleep(600)
+        Local $ProfilesCleared = ClearProfilesFolder()
+
+        If $ProfilesCleared Then
+
+            GUICtrlSetData($context, "GTA KILLED + PROFILES CLEARED")
+            GUICtrlSetColor($context, 0x8CDD57)
+
+        Else
+
+            GUICtrlSetData($context, "GTA KILLED / PROFILE CLEAR FAILED")
+            GUICtrlSetColor($context, 0xFF0000)
+
+        EndIf
+
+        Sleep(1000)
 
     EndIf
 
     $KillingGTA = False
 
     ResetStatus()
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; GTA V ENHANCED PROFILES PATH
+; -----------------------------------------------------------------------------
+
+Func ResolveProfilesPath()
+
+    ; -------------------------------------------------------------------------
+    ; 1) Try the path saved for this Windows user
+    ; -------------------------------------------------------------------------
+
+    Local $SavedPath = IniRead( _
+        $CONFIG_FILE, _
+        $CONFIG_SECTION, _
+        $CONFIG_KEY_PROFILES, _
+        "" _
+    )
+
+    If IsSafeProfilesPath($SavedPath) Then
+        Return NormalizePath($SavedPath)
+    EndIf
+
+    ; -------------------------------------------------------------------------
+    ; 2) Try the normal/current user's Documents path dynamically
+    ;
+    ; Example:
+    ; C:\Users\<current user>\Documents\Rockstar Games\GTAV Enhanced\Profiles
+    ;
+    ; @MyDocumentsDir also handles redirected Documents locations better than
+    ; hardcoding C:\Users\<username>\Documents.
+    ; -------------------------------------------------------------------------
+
+    Local $DefaultPath = _
+        @MyDocumentsDir & "\Rockstar Games\GTAV Enhanced\Profiles"
+
+    If IsSafeProfilesPath($DefaultPath) Then
+
+        SaveProfilesPath($DefaultPath)
+        Return NormalizePath($DefaultPath)
+
+    EndIf
+
+    ; -------------------------------------------------------------------------
+    ; 3) Could not detect it automatically. Ask the user once.
+    ; -------------------------------------------------------------------------
+
+    Local $Result = MsgBox( _
+        BitOR($MB_ICONINFORMATION, $MB_OKCANCEL), _
+        "GTAV SSA - Profiles folder", _
+        "The GTA V Enhanced Profiles folder could not be detected automatically." & _
+        @CRLF & @CRLF & _
+        "Please select this exact folder:" & @CRLF & _
+        "...\Rockstar Games\GTAV Enhanced\Profiles" & _
+        @CRLF & @CRLF & _
+        "The selected path will be saved for this Windows user." _
+    )
+
+    If $Result <> $IDOK Then
+        Return ""
+    EndIf
+
+    While 1
+
+        Local $SelectedPath = FileSelectFolder( _
+            "Select the GTA V Enhanced Profiles folder", _
+            @MyDocumentsDir, _
+            0 _
+        )
+
+        If @error Or $SelectedPath = "" Then
+            Return ""
+        EndIf
+
+        $SelectedPath = NormalizePath($SelectedPath)
+
+        If IsSafeProfilesPath($SelectedPath) Then
+
+            SaveProfilesPath($SelectedPath)
+            Return $SelectedPath
+
+        EndIf
+
+        Local $Retry = MsgBox( _
+            BitOR($MB_ICONWARNING, $MB_RETRYCANCEL), _
+            "GTAV SSA - Invalid folder", _
+            "For safety, GTAV SSA will only accept a folder ending in:" & _
+            @CRLF & @CRLF & _
+            "\Rockstar Games\GTAV Enhanced\Profiles" & _
+            @CRLF & @CRLF & _
+            "Selected folder:" & @CRLF & _
+            $SelectedPath _
+        )
+
+        If $Retry <> $IDRETRY Then
+            Return ""
+        EndIf
+
+    WEnd
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; SAVE PROFILES PATH
+; -----------------------------------------------------------------------------
+
+Func SaveProfilesPath($Path)
+
+    If Not IsSafeProfilesPath($Path) Then Return False
+
+    DirCreate($CONFIG_DIR)
+
+    Local $Result = IniWrite( _
+        $CONFIG_FILE, _
+        $CONFIG_SECTION, _
+        $CONFIG_KEY_PROFILES, _
+        NormalizePath($Path) _
+    )
+
+    Return ($Result <> 0)
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; NORMALIZE PATH
+; -----------------------------------------------------------------------------
+
+Func NormalizePath($Path)
+
+    Local $Result = $Path
+
+    ; Remove trailing slash/backslash so suffix validation is deterministic.
+    While StringLen($Result) > 3 And _
+          (StringRight($Result, 1) = "\" Or StringRight($Result, 1) = "/")
+
+        $Result = StringTrimRight($Result, 1)
+
+    WEnd
+
+    Return $Result
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; SAFETY VALIDATION FOR DESTRUCTIVE PROFILE CLEANUP
+; -----------------------------------------------------------------------------
+
+Func IsSafeProfilesPath($Path)
+
+    If $Path = "" Then Return False
+
+    Local $Normalized = NormalizePath($Path)
+
+    ; Folder must actually exist.
+    If Not FileExists($Normalized) Then Return False
+
+    ; It must be a directory, not a normal file.
+    Local $Attributes = FileGetAttrib($Normalized)
+
+    If @error Then Return False
+    If StringInStr($Attributes, "D") = 0 Then Return False
+
+    ; Important safety guard:
+    ; Only a Rockstar Games\GTAV Enhanced\Profiles path can be recursively
+    ; deleted by this program.
+    Local $LowerPath = StringLower($Normalized)
+    Local $RequiredSuffix = "\rockstar games\gtav enhanced\profiles"
+
+    If StringLen($LowerPath) <= StringLen($RequiredSuffix) Then Return False
+
+    If StringRight($LowerPath, StringLen($RequiredSuffix)) <> $RequiredSuffix Then
+        Return False
+    EndIf
+
+    Return True
+
+EndFunc
+
+; -----------------------------------------------------------------------------
+; CLEAR CONTENTS OF GTA V ENHANCED PROFILES
+; -----------------------------------------------------------------------------
+
+Func ClearProfilesFolder()
+
+    ; Revalidate every single time before doing a recursive delete.
+    If Not IsSafeProfilesPath($ProfilesPath) Then
+
+        ; Saved path may have moved/disappeared since startup.
+        $ProfilesPath = ResolveProfilesPath()
+
+        If Not IsSafeProfilesPath($ProfilesPath) Then
+
+            MsgBox( _
+                $MB_ICONERROR, _
+                "GTAV SSA", _
+                "Profiles cleanup was skipped because a valid GTA V Enhanced" & _
+                " Profiles folder could not be found." _
+            )
+
+            Return False
+
+        EndIf
+
+    EndIf
+
+    Local $TargetPath = NormalizePath($ProfilesPath)
+
+    ; -------------------------------------------------------------------------
+    ; Delete the Profiles folder recursively, then immediately recreate it.
+    ; This guarantees files, profile subfolders, hidden files, etc. are removed
+    ; while leaving an empty Profiles directory in place for GTA.
+    ; -------------------------------------------------------------------------
+
+    Local $DeleteResult = DirRemove($TargetPath, 1)
+
+    If $DeleteResult = 0 And FileExists($TargetPath) Then
+
+        MsgBox( _
+            $MB_ICONERROR, _
+            "GTAV SSA", _
+            "Could not completely clear the Profiles folder:" & _
+            @CRLF & @CRLF & _
+            $TargetPath _
+        )
+
+        Return False
+
+    EndIf
+
+    DirCreate($TargetPath)
+
+    If Not FileExists($TargetPath) Then
+
+        MsgBox( _
+            $MB_ICONERROR, _
+            "GTAV SSA", _
+            "The Profiles folder was cleared, but it could not be recreated:" & _
+            @CRLF & @CRLF & _
+            $TargetPath _
+        )
+
+        Return False
+
+    EndIf
+
+    Return True
 
 EndFunc
 
